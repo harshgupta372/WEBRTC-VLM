@@ -1,0 +1,2 @@
+# This directory will contain ONNX models for WASM inference
+# Models should be placed here for client-side inference

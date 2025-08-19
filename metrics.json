@@ -1,0 +1,15 @@
+{
+  "timestamp": "2025-01-01T00:00:00.000Z",
+  "duration_seconds": 30,
+  "total_frames": 450,
+  "processed_fps": 15.0,
+  "latency": {
+    "median_ms": 85,
+    "p95_ms": 145
+  },
+  "bandwidth": {
+    "uplink_kbps": 2500,
+    "downlink_kbps": 150
+  },
+  "frame_details": []
+}

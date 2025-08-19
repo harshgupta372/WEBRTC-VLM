@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  webrtc-detection:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MODE=${MODE:-wasm}
+    volumes:
+      - ./models:/app/dist/models
+      - ./metrics:/app/metrics
+    networks:
+      - detection-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Add ngrok service for external access
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command:
+      - "start"
+      - "--all"
+      - "--config"
+      - "/etc/ngrok.yml"
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml
+    ports:
+      - 4040:4040
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
+    profiles:
+      - ngrok
+    networks:
+      - detection-network
+
+networks:
+  detection-network:
+    driver: bridge
+
+volumes:
+  models:
+  metrics:

@@ -1,0 +1,3 @@
+# Placeholder ONNX model file
+# This is a placeholder - in production you would download the actual MobileNet-SSD ONNX model
+# For now, the system will use mock detections until a real model is added
