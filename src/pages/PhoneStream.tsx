@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -12,23 +12,19 @@ export default function PhoneStreamPage() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const websocketRef = useRef<WebSocket | null>(null);
 
-  useEffect(() => {
-    initializePhoneStream();
-    
-    return () => {
-      cleanup();
-    };
-  }, []);
-
-  const initializePhoneStream = async () => {
+  const initializePhoneStream = useCallback(async () => {
     try {
-      // Check for different getUserMedia implementations
-      const getUserMedia = navigator.mediaDevices?.getUserMedia || 
-                          (navigator as any).getUserMedia || 
-                          (navigator as any).webkitGetUserMedia || 
-                          (navigator as any).mozGetUserMedia;
+      // Check if we're on HTTPS or localhost
+      const isSecure = window.location.protocol === 'https:' || 
+                      window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1';
+      
+      if (!isSecure) {
+        throw new Error('Camera access requires HTTPS. Please access this page via HTTPS or use a local tunnel service like ngrok.');
+      }
 
-      if (!getUserMedia) {
+      // Check for getUserMedia support
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera API not supported in this browser. Please use Chrome, Safari, or Firefox.');
       }
 
@@ -65,14 +61,7 @@ export default function PhoneStreamPage() {
 
       for (const constraints of constraintOptions) {
         try {
-          if (navigator.mediaDevices?.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-          } else {
-            // Legacy API fallback
-            stream = await new Promise((resolve, reject) => {
-              getUserMedia.call(navigator, constraints, resolve, reject);
-            });
-          }
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
           break;
         } catch (err) {
           lastError = err;
@@ -107,7 +96,15 @@ export default function PhoneStreamPage() {
         setError(`Camera error: ${err.message || err}\n\nTry:\n1. Refreshing the page\n2. Using Chrome or Safari\n3. Checking camera permissions`);
       }
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    initializePhoneStream();
+    
+    return () => {
+      cleanup();
+    };
+  }, [initializePhoneStream]);
 
   const setupWebRTCConnection = async (stream: MediaStream) => {
     try {
