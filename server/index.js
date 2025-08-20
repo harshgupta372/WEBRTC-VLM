@@ -36,13 +36,14 @@ const clients = new Map();
 let roomConnections = new Map();
 
 wss.on('connection', (ws, req) => {
-  console.log('New WebSocket connection');
+  console.log('New WebSocket connection from:', req.headers.origin || req.headers.host);
   
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
       
       switch (data.type) {
+        case 'join':
         case 'start-stream':
           handleStartStream(ws, data);
           break;
@@ -68,14 +69,18 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log('WebSocket connection closed');
+    console.log(`WebSocket connection closed for ${ws.role || 'unknown'} client`);
     // Clean up client from rooms
     for (let [roomId, connections] of roomConnections) {
       const index = connections.indexOf(ws);
       if (index > -1) {
+        console.log(`Removing ${ws.role || 'unknown'} client from room ${roomId}`);
         connections.splice(index, 1);
         if (connections.length === 0) {
           roomConnections.delete(roomId);
+          console.log(`Room ${roomId} deleted - no clients remaining`);
+        } else {
+          console.log(`Room ${roomId} now has ${connections.length} clients`);
         }
       }
     }
@@ -89,61 +94,87 @@ function handleStartStream(ws, data) {
     roomConnections.set(roomId, []);
   }
   
-  roomConnections.get(roomId).push(ws);
+  // Remove any existing connections for this role to prevent duplicates
+  const connections = roomConnections.get(roomId);
+  const existingIndex = connections.findIndex(client => client.role === data.role);
+  if (existingIndex !== -1) {
+    connections.splice(existingIndex, 1);
+    console.log(`Removed existing ${data.role} client`);
+  }
+  
+  connections.push(ws);
   ws.roomId = roomId;
   ws.role = data.role;
   
   console.log(`Client joined room ${roomId} as ${data.role}`);
+  console.log(`Total clients in room: ${connections.length}`);
   
-  // If we have both phone and browser, start WebRTC negotiation
-  const connections = roomConnections.get(roomId);
-  const phoneClient = connections.find(client => client.role === 'phone');
-  const browserClient = connections.find(client => client.role === 'browser');
-  
-  if (phoneClient && browserClient && phoneClient !== browserClient) {
-    // Browser creates offer
-    if (ws.role === 'browser') {
-      ws.send(JSON.stringify({ type: 'create-offer' }));
+  // Check for both clients after a brief delay to ensure both are registered
+  setTimeout(() => {
+    const currentConnections = roomConnections.get(roomId) || [];
+    const phoneClient = currentConnections.find(client => client.role === 'phone' && client.readyState === 1);
+    const browserClient = currentConnections.find(client => client.role === 'browser' && client.readyState === 1);
+    
+    console.log(`Phone client: ${phoneClient ? 'connected' : 'not found'}`);
+    console.log(`Browser client: ${browserClient ? 'connected' : 'not found'}`);
+    
+    if (phoneClient && browserClient && phoneClient !== browserClient) {
+      console.log('Both clients connected, initiating WebRTC handshake');
+      // Always send create-offer to browser client
+      console.log('Sending create-offer to browser');
+      browserClient.send(JSON.stringify({ type: 'create-offer' }));
     }
-  }
+  }, 100);
 }
 
 function handleOffer(ws, data) {
+  console.log('Forwarding offer from browser to phone');
   // Forward offer to phone client
   const connections = roomConnections.get(ws.roomId) || [];
   const phoneClient = connections.find(client => client.role === 'phone');
   
   if (phoneClient) {
+    console.log('Sending offer to phone client');
     phoneClient.send(JSON.stringify({
       type: 'offer',
       offer: data.offer
     }));
+  } else {
+    console.log('No phone client found to send offer to');
   }
 }
 
 function handleAnswer(ws, data) {
+  console.log('Forwarding answer from phone to browser');
   // Forward answer to browser client
   const connections = roomConnections.get(ws.roomId) || [];
   const browserClient = connections.find(client => client.role === 'browser');
   
   if (browserClient) {
+    console.log('Sending answer to browser client');
     browserClient.send(JSON.stringify({
       type: 'answer',
       answer: data.answer
     }));
+  } else {
+    console.log('No browser client found to send answer to');
   }
 }
 
 function handleIceCandidate(ws, data) {
+  console.log(`Forwarding ICE candidate from ${ws.role}`);
   // Forward ICE candidate to the other peer
   const connections = roomConnections.get(ws.roomId) || [];
-  const otherClient = connections.find(client => client !== ws);
+  const otherClient = connections.find(client => client !== ws && client.readyState === 1);
   
   if (otherClient) {
+    console.log(`Sending ICE candidate to ${otherClient.role}`);
     otherClient.send(JSON.stringify({
       type: 'ice-candidate',
       candidate: data.candidate
     }));
+  } else {
+    console.log('No other client found to forward ICE candidate to');
   }
 }
 
@@ -169,6 +200,16 @@ app.post('/api/detect', upload.single('image'), async (req, res) => {
     console.error('Detection error:', error);
     res.status(500).json({ error: 'Detection failed' });
   }
+});
+
+// Health check endpoint for Docker
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    websocket: wss.clients.size + ' clients connected'
+  });
 });
 
 // Serve React app for all routes
@@ -211,7 +252,7 @@ app.get('*', (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket server ready`);
