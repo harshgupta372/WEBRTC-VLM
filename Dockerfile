@@ -27,6 +27,18 @@ FROM node:18-alpine
 
 WORKDIR /app
 
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN npm run build
+
 # Install Python for optional ML inference
 RUN apk add --no-cache python3 py3-pip
 

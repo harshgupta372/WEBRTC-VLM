@@ -16,10 +16,13 @@ export interface DetectionResult {
 }
 
 export class ObjectDetectionEngine {
-  private isServerMode: boolean;
-  private session: unknown = null;
+  private session: any = null;
   private modelLoaded = false;
-  private frameQueue: Array<{ imageData: ImageData; captureTs: number; frameId: string }> = [];
+  private isServerMode: boolean;
+  private frameQueue: ImageData[] = [];
+  private persistentDetections: Detection[] = [];
+  private lastDetectionUpdate = 0;
+  private detectionUpdateInterval = 2000; // Update detections every 2 seconds
   private isProcessing = false;
 
   constructor(isServerMode: boolean) {
@@ -158,30 +161,76 @@ export class ObjectDetectionEngine {
   }
 
   private generateMockDetections(): Detection[] {
-    // Generate realistic mock detections for demo
+    const now = Date.now();
+    
+    // Only update detections every 2 seconds for stability
+    if (now - this.lastDetectionUpdate < this.detectionUpdateInterval && this.persistentDetections.length > 0) {
+      // Add slight movement to existing detections for realism
+      return this.persistentDetections.map(detection => ({
+        ...detection,
+        xmin: Math.max(0, Math.min(0.9, detection.xmin + (Math.random() - 0.5) * 0.02)),
+        ymin: Math.max(0, Math.min(0.9, detection.ymin + (Math.random() - 0.5) * 0.02)),
+        xmax: Math.max(0.1, Math.min(1.0, detection.xmax + (Math.random() - 0.5) * 0.02)),
+        ymax: Math.max(0.1, Math.min(1.0, detection.ymax + (Math.random() - 0.5) * 0.02)),
+        score: Math.max(0.6, Math.min(1.0, detection.score + (Math.random() - 0.5) * 0.1))
+      }));
+    }
+    
+    // Generate new stable detections
+    this.lastDetectionUpdate = now;
     const mockObjects = [
-      { label: 'person', prob: 0.1 },
-      { label: 'phone', prob: 0.2 },
-      { label: 'cup', prob: 0.15 },
-      { label: 'book', prob: 0.1 },
-      { label: 'laptop', prob: 0.1 }
+      { label: 'person', prob: 0.8 },
+      { label: 'phone', prob: 0.7 },
+      { label: 'cup', prob: 0.5 },
+      { label: 'book', prob: 0.4 },
+      { label: 'laptop', prob: 0.6 }
     ];
 
     const detections: Detection[] = [];
     
+    // Generate 2-3 stable objects for better demo
     mockObjects.forEach(obj => {
       if (Math.random() < obj.prob) {
+        const xmin = Math.random() * 0.5; // Random position
+        const ymin = Math.random() * 0.5;
+        const width = 0.2 + Math.random() * 0.2; // 20-40% width
+        const height = 0.2 + Math.random() * 0.2; // 20-40% height
+        
         detections.push({
           label: obj.label,
-          score: 0.7 + Math.random() * 0.3, // 70-100% confidence
-          xmin: Math.random() * 0.5, // Random position
-          ymin: Math.random() * 0.5,
-          xmax: Math.random() * 0.3 + 0.2, // Random size
-          ymax: Math.random() * 0.3 + 0.2
+          score: 0.75 + Math.random() * 0.2, // 75-95% confidence
+          xmin: xmin,
+          ymin: ymin,
+          xmax: Math.min(xmin + width, 1.0),
+          ymax: Math.min(ymin + height, 1.0)
         });
       }
     });
 
+    // Ensure at least 2 objects for good demo
+    if (detections.length < 2) {
+      detections.push(
+        {
+          label: 'person',
+          score: 0.88,
+          xmin: 0.1,
+          ymin: 0.2,
+          xmax: 0.5,
+          ymax: 0.7
+        },
+        {
+          label: 'phone',
+          score: 0.82,
+          xmin: 0.6,
+          ymin: 0.4,
+          xmax: 0.85,
+          ymax: 0.65
+        }
+      );
+    }
+
+    this.persistentDetections = detections;
+    console.log('Generated', detections.length, 'stable mock detections:', detections.map(d => d.label));
     return detections;
   }
 

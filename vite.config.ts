@@ -12,6 +12,19 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    allowedHosts: ['8df629c7c3cf.ngrok-free.app']
+    allowedHosts: ['da0853474abb.ngrok-free.app'],
+    proxy: {
+      '/ws': {
+        target: 'ws://localhost:3002',
+        ws: true,
+        changeOrigin: true,
+        secure: false
+      },
+      '/api': {
+        target: 'http://localhost:3002',
+        changeOrigin: true,
+        secure: false
+      }
+    }
   }
 })

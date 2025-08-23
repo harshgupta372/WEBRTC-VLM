@@ -9,6 +9,7 @@ export default function PhoneStreamPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [error, setError] = useState<string>('');
+  const [cameraInitialized, setCameraInitialized] = useState(false);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const websocketRef = useRef<WebSocket | null>(null);
 
@@ -79,6 +80,7 @@ export default function PhoneStreamPage() {
 
       // Initialize WebRTC connection
       await setupWebRTCConnection(stream);
+      setCameraInitialized(true);
       
     } catch (err) {
       console.error('Camera access error:', err);
@@ -98,13 +100,12 @@ export default function PhoneStreamPage() {
     }
   }, []);
 
+  // Remove auto-initialization - require user interaction
   useEffect(() => {
-    initializePhoneStream();
-    
     return () => {
       cleanup();
     };
-  }, [initializePhoneStream]);
+  }, []);
 
   const setupWebRTCConnection = async (stream: MediaStream) => {
     try {
@@ -128,6 +129,7 @@ export default function PhoneStreamPage() {
       // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate && websocketRef.current) {
+          console.log('Phone sending ICE candidate');
           websocketRef.current.send(JSON.stringify({
             type: 'ice-candidate',
             candidate: event.candidate
@@ -135,10 +137,43 @@ export default function PhoneStreamPage() {
         }
       };
 
+      // Handle connection state changes
+      peerConnection.onconnectionstatechange = () => {
+        console.log('Phone connection state:', peerConnection.connectionState);
+        if (peerConnection.connectionState === 'connected') {
+          console.log('Phone WebRTC connection established successfully');
+          setConnectionStatus('connected');
+          setIsStreaming(true);
+        } else if (peerConnection.connectionState === 'failed') {
+          console.error('Phone WebRTC connection failed');
+          setConnectionStatus('disconnected');
+          setIsStreaming(false);
+        } else if (peerConnection.connectionState === 'disconnected') {
+          console.log('Phone WebRTC connection disconnected');
+          setConnectionStatus('disconnected');
+          setIsStreaming(false);
+        } else if (peerConnection.connectionState === 'connecting') {
+          console.log('Phone WebRTC connection attempting to connect');
+          setConnectionStatus('connecting');
+        }
+      };
+
+      // Handle ICE connection state changes
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log('Phone ICE connection state:', peerConnection.iceConnectionState);
+        if (peerConnection.iceConnectionState === 'connected' || peerConnection.iceConnectionState === 'completed') {
+          console.log('Phone ICE connection established');
+        } else if (peerConnection.iceConnectionState === 'failed') {
+          console.error('Phone ICE connection failed');
+          // Try to restart ICE
+          peerConnection.restartIce();
+        }
+      };
+
       // Initialize WebSocket connection
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost = window.location.hostname;
-      const wsUrl = `${wsProtocol}//${wsHost}:3000/ws`;
+      const wsHost = window.location.host; // Use host instead of hostname to include port
+      const wsUrl = `${wsProtocol}//${wsHost}/ws`;
       const websocket = new WebSocket(wsUrl);
       websocketRef.current = websocket;
 
@@ -156,20 +191,36 @@ export default function PhoneStreamPage() {
         
         switch (message.type) {
           case 'offer': {
-            await peerConnection.setRemoteDescription(message.offer);
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            websocket.send(JSON.stringify({
-              type: 'answer',
-              answer: answer
-            }));
-            setConnectionStatus('connected');
-            setIsStreaming(true);
+            console.log('Phone received offer from browser');
+            try {
+              await peerConnection.setRemoteDescription(message.offer);
+              console.log('Phone set remote description (offer)');
+              console.log('Phone creating answer');
+              const answer = await peerConnection.createAnswer();
+              await peerConnection.setLocalDescription(answer);
+              console.log('Phone set local description (answer)');
+              console.log('Phone sending answer to server');
+              websocket.send(JSON.stringify({
+                type: 'answer',
+                answer: answer
+              }));
+            } catch (error) {
+              console.error('Phone failed to handle offer:', error);
+              setError(`Failed to establish connection: ${error.message}`);
+            }
             break;
           }
             
           case 'ice-candidate':
-            await peerConnection.addIceCandidate(message.candidate);
+            if (message.candidate) {
+              console.log('Phone received ICE candidate from browser');
+              try {
+                await peerConnection.addIceCandidate(message.candidate);
+                console.log('Phone added ICE candidate successfully');
+              } catch (error) {
+                console.error('Phone failed to add ICE candidate:', error);
+              }
+            }
             break;
         }
       };
@@ -180,7 +231,8 @@ export default function PhoneStreamPage() {
         setConnectionStatus('disconnected');
       };
 
-      websocket.onclose = () => {
+      websocket.onclose = (event) => {
+        console.log('WebSocket closed:', event.code, event.reason);
         setConnectionStatus('disconnected');
         setIsStreaming(false);
       };
@@ -192,10 +244,16 @@ export default function PhoneStreamPage() {
     }
   };
 
+  const startCamera = async () => {
+    setError('');
+    await initializePhoneStream();
+  };
+
   const stopStreaming = () => {
     cleanup();
     setIsStreaming(false);
     setConnectionStatus('disconnected');
+    setCameraInitialized(false);
   };
 
   const cleanup = () => {
@@ -217,26 +275,33 @@ export default function PhoneStreamPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
       <div className="max-w-md mx-auto space-y-6">
         {/* Header */}
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-bold">Phone Camera Stream</h1>
-          <Badge variant={
-            connectionStatus === 'connected' ? 'default' : 
-            connectionStatus === 'connecting' ? 'secondary' : 'outline'
-          }>
-            {connectionStatus}
-          </Badge>
+        <div className="text-center space-y-4">
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+            📱 Phone Camera Stream
+          </h1>
+          <p className="text-gray-300 text-lg font-medium">
+            Point your camera at objects for real-time detection
+          </p>
         </div>
 
         {/* Video Stream */}
-        <Card>
+        <Card className="bg-white/10 backdrop-blur-sm border-white/20">
           <CardHeader>
-            <CardTitle>Live Camera Feed</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-white">
+              📹 Camera Status
+              <Badge className={`${
+                connectionStatus === 'connected' ? 'bg-green-500/20 text-green-300 border-green-500/30' : 
+                connectionStatus === 'connecting' ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30' : 'bg-red-500/20 text-red-300 border-red-500/30'
+              }`}>
+                {connectionStatus === 'connected' ? '🟢' : connectionStatus === 'connecting' ? '🟡' : '🔴'} {connectionStatus}
+              </Badge>
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+            <div className="aspect-video bg-gradient-to-br from-gray-900 to-black rounded-xl overflow-hidden relative border border-white/10 shadow-2xl">
               <video
                 ref={videoRef}
                 autoPlay
@@ -245,11 +310,22 @@ export default function PhoneStreamPage() {
                 className="w-full h-full object-cover"
               />
               
-              {!isStreaming && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <p className="text-white text-center">
-                    {connectionStatus === 'connecting' ? 'Connecting...' : 'Camera not active'}
+              {!cameraInitialized && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-gray-800/50 to-black/50">
+                  <div className="text-6xl mb-4 animate-pulse">📹</div>
+                  <p className="text-white text-center px-4 text-lg font-medium mb-2">
+                    Ready to stream!
                   </p>
+                  <p className="text-gray-400 text-sm text-center px-4">
+                    Tap "Start Camera" to begin
+                  </p>
+                </div>
+              )}
+              
+              {connectionStatus === 'connected' && (
+                <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-full px-3 py-1">
+                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="text-red-400 text-sm font-medium">LIVE</span>
                 </div>
               )}
             </div>
@@ -257,49 +333,93 @@ export default function PhoneStreamPage() {
         </Card>
 
         {/* Controls */}
-        <Card>
+        <Card className="bg-white/10 backdrop-blur-sm border-white/20">
           <CardContent className="pt-6">
             <div className="space-y-4">
               <div className="text-center space-y-2">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-gray-300">
                   Point your camera at objects to detect them in real-time
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-gray-400">
                   Detection results will appear on the main browser screen
                 </p>
               </div>
               
-              <Button 
-                onClick={stopStreaming}
-                variant="destructive"
-                className="w-full"
-                disabled={!isStreaming}
-              >
-                Stop Streaming
-              </Button>
+              {!cameraInitialized ? (
+                <Button 
+                  onClick={initializePhoneStream}
+                  disabled={isStreaming}
+                  className={`w-full font-semibold transition-all duration-200 ${
+                    isStreaming 
+                      ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/25 cursor-not-allowed' 
+                      : 'bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white shadow-lg shadow-purple-500/25'
+                  }`}
+                >
+                  {isStreaming ? '✅ Camera Active' : '📹 Start Camera'}
+                </Button>
+              ) : (
+                <Button 
+                  onClick={stopStreaming}
+                  className="w-full font-semibold bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white shadow-lg shadow-red-500/25"
+                >
+                  ⏹️ Stop Streaming
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
 
         {/* Error Alert */}
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
+          <Alert className="bg-red-500/10 border-red-500/30 backdrop-blur-sm">
+            <AlertDescription className="text-red-300 flex items-center gap-2">
+              <span className="text-red-400">⚠️</span>
+              {error}
+            </AlertDescription>
           </Alert>
         )}
 
         {/* Instructions */}
-        <Card>
+        <Card className="bg-white/5 backdrop-blur-sm border-white/10">
           <CardHeader>
-            <CardTitle className="text-sm">Instructions</CardTitle>
+            <CardTitle className="text-sm text-white flex items-center gap-2">
+              💡 Instructions
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-xs space-y-2">
-            <p>• Keep this tab open while streaming</p>
-            <p>• Ensure good lighting for better detection</p>
-            <p>• Move objects slowly for accurate tracking</p>
-            <p>• Check the main screen for detection overlays</p>
+            <p className="text-gray-300 flex items-center gap-2">
+              <span className="text-cyan-400">•</span> Keep this tab open while streaming
+            </p>
+            <p className="text-gray-300 flex items-center gap-2">
+              <span className="text-purple-400">•</span> Make sure you have a stable internet connection
+            </p>
+            <p className="text-gray-300 flex items-center gap-2">
+              <span className="text-pink-400">•</span> Point camera at different objects to test detection
+            </p>
+            <p className="text-gray-300 flex items-center gap-2">
+              <span className="text-green-400">•</span> Detection results appear on the browser screen
+            </p>
           </CardContent>
         </Card>
+
+        {/* Status Alerts */}
+        {connectionStatus === 'connecting' && (
+          <Alert className="bg-yellow-500/10 border-yellow-500/30 backdrop-blur-sm">
+            <AlertDescription className="text-yellow-300 flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
+              Connecting to browser... Make sure the browser is ready to receive the stream.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {connectionStatus === 'connected' && (
+          <Alert className="bg-green-500/10 border-green-500/30 backdrop-blur-sm">
+            <AlertDescription className="text-green-300 flex items-center gap-2">
+              <span className="text-green-400">🎉</span>
+              Successfully connected! Your camera stream is being sent to the browser for real-time object detection.
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
     </div>
   );
